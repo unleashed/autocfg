@@ -59,6 +59,7 @@ macro_rules! try {
     };
 }
 
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -86,6 +87,7 @@ pub struct AutoCfg {
     rustc_version: Version,
     target: Option<OsString>,
     no_std: bool,
+    features: HashSet<String>,
     rustflags: Option<Vec<String>>,
 }
 
@@ -196,6 +198,7 @@ impl AutoCfg {
             rustc_version: rustc_version,
             target: target,
             no_std: false,
+            features: HashSet::new(),
             rustflags: rustflags,
         };
 
@@ -220,9 +223,14 @@ impl AutoCfg {
 
     /// Sets a `cfg` value of the form `rustc_major_minor`, like `rustc_1_29`,
     /// if the current `rustc` is at least that version.
-    pub fn emit_rustc_version(&self, major: usize, minor: usize) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_rustc_version(&self, major: usize, minor: usize) -> bool {
         if self.probe_rustc_version(major, minor) {
             emit(&format!("rustc_{}_{}", major, minor));
+            true
+        } else {
+            false
         }
     }
 
@@ -255,6 +263,13 @@ impl AutoCfg {
         if self.no_std {
             try!(stdin.write_all(b"#![no_std]\n").map_err(error::from_io));
         }
+
+        for feature in &self.features {
+            try!(stdin
+                .write_all(format!("#![feature({})]\n", feature).as_bytes())
+                .map_err(error::from_io));
+        }
+
         try!(stdin.write_all(code.as_ref()).map_err(error::from_io));
         drop(stdin);
 
@@ -275,9 +290,14 @@ impl AutoCfg {
     }
 
     /// Emits a config value `has_CRATE` if `probe_sysroot_crate` returns true.
-    pub fn emit_sysroot_crate(&self, name: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_sysroot_crate(&self, name: &str) -> bool {
         if self.probe_sysroot_crate(name) {
             emit(&format!("has_{}", mangle(name)));
+            true
+        } else {
+            false
         }
     }
 
@@ -296,16 +316,26 @@ impl AutoCfg {
     ///
     /// Any non-identifier characters in the `path` will be replaced with
     /// `_` in the generated config value.
-    pub fn emit_has_path(&self, path: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_has_path(&self, path: &str) -> bool {
         if self.probe_path(path) {
             emit(&format!("has_{}", mangle(path)));
+            true
+        } else {
+            false
         }
     }
 
     /// Emits the given `cfg` value if `probe_path` returns true.
-    pub fn emit_path_cfg(&self, path: &str, cfg: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_path_cfg(&self, path: &str, cfg: &str) -> bool {
         if self.probe_path(path) {
             emit(cfg);
+            true
+        } else {
+            false
         }
     }
 
@@ -325,16 +355,26 @@ impl AutoCfg {
     ///
     /// Any non-identifier characters in the trait `name` will be replaced with
     /// `_` in the generated config value.
-    pub fn emit_has_trait(&self, name: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_has_trait(&self, name: &str) -> bool {
         if self.probe_trait(name) {
             emit(&format!("has_{}", mangle(name)));
+            true
+        } else {
+            false
         }
     }
 
     /// Emits the given `cfg` value if `probe_trait` returns true.
-    pub fn emit_trait_cfg(&self, name: &str, cfg: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_trait_cfg(&self, name: &str, cfg: &str) -> bool {
         if self.probe_trait(name) {
             emit(cfg);
+            true
+        } else {
+            false
         }
     }
 
@@ -354,16 +394,26 @@ impl AutoCfg {
     ///
     /// Any non-identifier characters in the type `name` will be replaced with
     /// `_` in the generated config value.
-    pub fn emit_has_type(&self, name: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_has_type(&self, name: &str) -> bool {
         if self.probe_type(name) {
             emit(&format!("has_{}", mangle(name)));
+            true
+        } else {
+            false
         }
     }
 
     /// Emits the given `cfg` value if `probe_type` returns true.
-    pub fn emit_type_cfg(&self, name: &str, cfg: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_type_cfg(&self, name: &str, cfg: &str) -> bool {
         if self.probe_type(name) {
             emit(cfg);
+            true
+        } else {
+            false
         }
     }
 
@@ -380,9 +430,14 @@ impl AutoCfg {
     }
 
     /// Emits the given `cfg` value if `probe_expression` returns true.
-    pub fn emit_expression_cfg(&self, expr: &str, cfg: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_expression_cfg(&self, expr: &str, cfg: &str) -> bool {
         if self.probe_expression(expr) {
             emit(cfg);
+            true
+        } else {
+            false
         }
     }
 
@@ -399,10 +454,85 @@ impl AutoCfg {
     }
 
     /// Emits the given `cfg` value if `probe_constant` returns true.
-    pub fn emit_constant_cfg(&self, expr: &str, cfg: &str) {
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_constant_cfg(&self, expr: &str, cfg: &str) -> bool {
         if self.probe_constant(expr) {
             emit(cfg);
+            true
+        } else {
+            false
         }
+    }
+
+    /// Runs an `action` with `features` enabled and cleans up enabled features
+    /// afterwards.
+    ///
+    /// The returned value will be the boolean returned by the given `action`.
+    pub fn probe_features_with<F: FnOnce(&mut Self) -> bool>(
+        &mut self,
+        features: &[&str],
+        probe_fn: F,
+    ) -> bool {
+        for &feature in features {
+            if !self.features.insert(feature.to_string()) {
+                panic!("feature {} enabled twice", feature);
+            }
+        }
+
+        let res = probe_fn(self);
+
+        for &feature in features {
+            self.features.remove(feature);
+        }
+
+        res
+    }
+
+    /// Emits a config value `feature_FEATURE` for every feature in `features`
+    /// if `probe_features_with` returns true.
+    ///
+    /// Any non-identifier characters in the `feature` will be replaced with
+    /// `_` in the generated config value.
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_features_with<F: FnOnce(&mut Self) -> bool>(
+        &mut self,
+        features: &[&str],
+        probe_fn: F,
+    ) -> bool {
+        if self.probe_features_with(features, probe_fn) {
+            for &feature in features {
+                emit(&format!("feature_{}", mangle(feature)));
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Probes the acceptance of a particular `feature`.
+    pub fn probe_feature(&mut self, feature: &str) -> bool {
+        let features = &[feature];
+        self.probe_features_with(features, |ac| ac.probe("").unwrap_or(false))
+    }
+
+    /// Emits a config value `feature_FEATURE` if `probe_feature` returns true.
+    ///
+    /// Any non-identifier characters in the `feature` will be replaced with
+    /// `_` in the generated config value.
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_feature(&mut self, feature: &str) -> bool {
+        self.emit_features_with(&[feature], |ac| ac.probe("").unwrap_or(false))
+    }
+
+    /// Returns true if using a nightly channel compiler
+    pub fn is_nightly(&self) -> bool {
+        self.rustc_version
+            .extra()
+            .map(|extra| extra.starts_with("nightly"))
+            .unwrap_or(false)
     }
 }
 

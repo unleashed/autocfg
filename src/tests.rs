@@ -133,6 +133,38 @@ fn probe_constant() {
 }
 
 #[test]
+fn probe_feature() {
+    let mut ac = AutoCfg::for_test().unwrap();
+
+    // Enabling features should work only on the nightly channel.
+    // `lang_items` should always be nightly-only
+    assert_eq!(ac.probe_feature("lang_items"), ac.is_nightly());
+}
+
+#[test]
+fn probe_features_with() {
+    let mut ac = AutoCfg::for_test().unwrap();
+
+    // Enabling features should work only on the nightly channel.
+    // Hopefully `lang_items` and `rustc_private` never go stable or removed.
+    assert_eq!(
+        ac.probe_features_with(&["lang_items"], |fac| {
+            fac.probe_features_with(&["rustc_private"], |ffac| ffac.probe("").unwrap_or(false))
+        }),
+        ac.is_nightly()
+    );
+    // unknown features should fail
+    assert_eq!(
+        ac.probe_features_with(&["lang_items"], |fac| {
+            fac.probe_features_with(&["unknown_feature_should_fail"], |ffac| {
+                ffac.probe("").unwrap_or(false)
+            })
+        }),
+        false
+    );
+}
+
+#[test]
 fn dir_does_not_contain_target() {
     assert!(!super::dir_contains_target(
         &Some("x86_64-unknown-linux-gnu".into()),

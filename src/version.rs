@@ -10,6 +10,7 @@ pub struct Version {
     major: usize,
     minor: usize,
     patch: usize,
+    extra: Option<String>,
 }
 
 impl Version {
@@ -19,6 +20,7 @@ impl Version {
             major: major,
             minor: minor,
             patch: patch,
+            extra: None,
         }
     }
 
@@ -39,10 +41,11 @@ impl Version {
             None => return Err(error::from_str("could not find rustc release")),
         };
 
-        // Strip off any extra channel info, e.g. "-beta.N", "-nightly"
-        let version = match release.find('-') {
-            Some(i) => &release[..i],
-            None => release,
+        // Strip off any extra channel info, e.g. "-beta.N", "-nightly", and
+        // store the contents after the dash in the `extra` field.
+        let (version, extra) = match release.find('-') {
+            Some(i) => (&release[..i], Some(release[i + 1..].to_string())),
+            None => (release, None),
         };
 
         // Split the version into semver components.
@@ -51,10 +54,15 @@ impl Version {
         let minor = try!(iter.next().ok_or(error::from_str("missing minor version")));
         let patch = try!(iter.next().ok_or(error::from_str("missing patch version")));
 
-        Ok(Version::new(
-            try!(major.parse().map_err(error::from_num)),
-            try!(minor.parse().map_err(error::from_num)),
-            try!(patch.parse().map_err(error::from_num)),
-        ))
+        Ok(Version {
+            major: try!(major.parse().map_err(error::from_num)),
+            minor: try!(minor.parse().map_err(error::from_num)),
+            patch: try!(patch.parse().map_err(error::from_num)),
+            extra: extra,
+        })
+    }
+
+    pub(crate) fn extra(&self) -> Option<&str> {
+        self.extra.as_ref().map(|s| s.as_str())
     }
 }
