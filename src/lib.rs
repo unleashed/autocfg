@@ -439,10 +439,35 @@ impl AutoCfg {
         res
     }
 
+    /// Emits a config value `feature_FEATURE` for every feature in `features`
+    /// if `probe_features_with` returns true.
+    ///
+    /// Any non-identifier characters in the `feature` will be replaced with
+    /// `_` in the generated config value.
+    pub fn emit_features_with<F: FnOnce(&mut Self) -> bool>(
+        &mut self,
+        features: &[&str],
+        probe_fn: F,
+    ) {
+        if self.probe_features_with(features, probe_fn) {
+            for &feature in features {
+                emit(&format!("feature_{}", mangle(feature)));
+            }
+        }
+    }
+
     /// Probes the acceptance of a particular `feature`.
     pub fn probe_feature(&mut self, feature: &str) -> bool {
         let features = &[feature];
         self.probe_features_with(features, |ac| ac.probe("").unwrap_or(false))
+    }
+
+    /// Emits a config value `feature_FEATURE` if `probe_feature` returns true.
+    ///
+    /// Any non-identifier characters in the `feature` will be replaced with
+    /// `_` in the generated config value.
+    pub fn emit_feature(&mut self, feature: &str) {
+        self.emit_features_with(&[feature], |ac| ac.probe("").unwrap_or(false));
     }
 
     /// Returns true if using a nightly channel compiler
