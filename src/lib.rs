@@ -59,6 +59,7 @@ macro_rules! try {
     };
 }
 
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
@@ -86,6 +87,7 @@ pub struct AutoCfg {
     rustc_version: Version,
     target: Option<OsString>,
     no_std: bool,
+    features: HashSet<String>,
     rustflags: Option<Vec<String>>,
 }
 
@@ -196,6 +198,7 @@ impl AutoCfg {
             rustc_version: rustc_version,
             target: target,
             no_std: false,
+            features: HashSet::new(),
             rustflags: rustflags,
         };
 
@@ -255,6 +258,13 @@ impl AutoCfg {
         if self.no_std {
             try!(stdin.write_all(b"#![no_std]\n").map_err(error::from_io));
         }
+
+        for feature in &self.features {
+            try!(stdin
+                .write_all(format!("#![feature({})]\n", feature).as_bytes())
+                .map_err(error::from_io));
+        }
+
         try!(stdin.write_all(code.as_ref()).map_err(error::from_io));
         drop(stdin);
 
@@ -403,6 +413,44 @@ impl AutoCfg {
         if self.probe_constant(expr) {
             emit(cfg);
         }
+    }
+
+    /// Runs an `action` with `features` enabled and cleans up enabled features
+    /// afterwards.
+    ///
+    /// The returned value will be the boolean returned by the given `action`.
+    pub fn probe_features_with<F: FnOnce(&mut Self) -> bool>(
+        &mut self,
+        features: &[&str],
+        probe_fn: F,
+    ) -> bool {
+        for &feature in features {
+            if !self.features.insert(feature.to_string()) {
+                panic!("feature {} enabled twice", feature);
+            }
+        }
+
+        let res = probe_fn(self);
+
+        for &feature in features {
+            self.features.remove(feature);
+        }
+
+        res
+    }
+
+    /// Probes the acceptance of a particular `feature`.
+    pub fn probe_feature(&mut self, feature: &str) -> bool {
+        let features = &[feature];
+        self.probe_features_with(features, |ac| ac.probe("").unwrap_or(false))
+    }
+
+    /// Returns true if using a nightly channel compiler
+    pub fn is_nightly(&self) -> bool {
+        self.rustc_version
+            .extra()
+            .map(|extra| extra.starts_with("nightly"))
+            .unwrap_or(false)
     }
 }
 
