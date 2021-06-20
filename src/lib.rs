@@ -534,6 +534,82 @@ impl AutoCfg {
             .map(|extra| extra.starts_with("nightly"))
             .unwrap_or(false)
     }
+
+    /// Emits paths via `emit_has_path` determining whether `feature` is needed,
+    /// and if so it emits the corresponding feature flag.
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_paths_maybe_using_feature(&mut self, feature: &str, paths: &[&str]) -> bool {
+        let (mut emitted_paths, feature_paths): (Vec<_>, Vec<_>) = paths
+            .iter()
+            .map(|path| (*path, self.emit_has_path(path)))
+            .partition(|(_, result)| *result);
+
+        self.emit_features_with(&[feature], |fac| {
+            let emitted_feature_paths = feature_paths
+                .iter()
+                .map(|(path, _)| (*path, fac.emit_has_path(path)))
+                .filter(|(_, result)| *result)
+                .collect::<Vec<_>>();
+            emitted_paths.extend(emitted_feature_paths.iter());
+
+            !emitted_feature_paths.is_empty()
+        });
+
+        // emit has_<feature> if all paths are emitted
+        if paths
+            .iter()
+            .all(|&path| emitted_paths.contains(&(path, true)))
+        {
+            println!("cargo:rustc-cfg=supports_{}", feature);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Emits expressions via `emit_expression_cfg` determining whether `feature` is needed,
+    /// and if so it emits the corresponding feature flag.
+    ///
+    /// Uses the format `supports_feature` for the configured feature flag.
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_expression_maybe_using_feature(&mut self, feature: &str, expr: &str) -> bool {
+        let cfg = format!("supports_{}", feature);
+        self.emit_expression_maybe_using_feature_cfg(feature, &cfg, expr)
+    }
+
+    /// Emits expressions via `emit_expression_cfg` determining whether `feature` is needed,
+    /// and if so it emits the corresponding feature flag.
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_expression_maybe_using_feature_cfg(
+        &mut self,
+        feature: &str,
+        cfg: &str,
+        expr: &str,
+    ) -> bool {
+        if !self.emit_expression_cfg(expr, cfg) {
+            self.emit_features_with(&[feature], |fac| fac.emit_expression_cfg(expr, cfg))
+        } else {
+            true
+        }
+    }
+
+    /// Emits constants via `emit_constant_cfg` determining whether `feature` is needed,
+    /// and if so it emits the corresponding feature flag.
+    ///
+    /// Uses the format `supports_feature` for the configured feature flag.
+    ///
+    /// Returns true if the underlying probe was successful.
+    pub fn emit_constant_maybe_using_feature(&mut self, feature: &str, expr: &str) -> bool {
+        let cfg = format!("supports_{}", feature);
+        if !self.emit_constant_cfg(expr, &cfg) {
+            self.emit_features_with(&[feature], |fac| fac.emit_constant_cfg(expr, &cfg))
+        } else {
+            true
+        }
+    }
 }
 
 fn mangle(s: &str) -> String {
